@@ -1,0 +1,22 @@
+# OS
+.DS_Store
+
+# Claude Code
+.claude/
+.memory/
+
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Cache & Logs
+cache/
+logs/
+*.log
+
+# Environment
+.env
+.env.local
