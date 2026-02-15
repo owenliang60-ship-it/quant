@@ -56,6 +56,10 @@ CONFIG = {
     "annual_factor": 365,  # 年化因子 (加密市场全年交易)
     "min_data_days": 35,  # 最小数据要求
 
+    # 成交量筛选
+    "volume_filter_days": 90,  # 用3个月总成交量筛选
+    "volume_top_n": 100,       # 只取 Top 100
+
     # 排名展示
     "top_n": 20,
 
@@ -550,7 +554,10 @@ def format_rs_message(df_b: pd.DataFrame, df_c: pd.DataFrame,
             f"C30:{c30:>5.2f}  C14:{c14:>5.2f}\n"
         )
 
-    msg_c += f"\n扫描范围: 全部USDT合约 ({total_symbols}个)"
+    msg_c += (
+        f"\n筛选: 90天成交量 Top {total_symbols} | "
+        f"全部USDT合约"
+    )
 
     messages.append(msg_c)
 
@@ -578,7 +585,7 @@ def scan_rs_rating() -> tuple:
         return None, None, 0
 
     # 2. 加载/更新所有价格数据
-    price_dict = {}  # {symbol: np.ndarray of close prices}
+    all_data = {}  # {symbol: DataFrame}
     skipped = 0
     total = len(symbols)
 
@@ -592,19 +599,33 @@ def scan_rs_rating() -> tuple:
             skipped += 1
             continue
 
-        price_dict[symbol] = df["close"].values
+        all_data[symbol] = df
 
         # 限流：每20个请求休息1秒
         if idx % 20 == 0:
             time.sleep(1)
 
-    print(f"\n[数据] 有效标的: {len(price_dict)}, 跳过: {skipped}")
+    print(f"\n[数据] 有效标的: {len(all_data)}, 跳过: {skipped}")
 
-    if len(price_dict) < 10:
+    if len(all_data) < 10:
         print("[错误] 有效标的太少，无法计算有意义的排名")
         return None, None, 0
 
-    # 3. 计算 RS Rating
+    # 3. 按3个月总成交量筛选 Top 100
+    vol_days = CONFIG["volume_filter_days"]
+    vol_top_n = CONFIG["volume_top_n"]
+    volume_ranks = {}
+    for symbol, df in all_data.items():
+        tail = df.tail(vol_days)
+        volume_ranks[symbol] = tail["quote_volume"].sum() if "quote_volume" in tail.columns else 0
+
+    sorted_by_vol = sorted(volume_ranks.items(), key=lambda x: x[1], reverse=True)
+    top_symbols = {s for s, _ in sorted_by_vol[:vol_top_n]}
+    print(f"[筛选] {vol_days}天成交量 Top {vol_top_n} (从 {len(all_data)} 只中筛选)")
+
+    price_dict = {s: df["close"].values for s, df in all_data.items() if s in top_symbols}
+
+    # 4. 计算 RS Rating
     print("[计算] Method B — 风险调整 Z-Score...")
     df_b = compute_crypto_rs_b(price_dict)
     print(f"  计算完成: {len(df_b)} 只标的")

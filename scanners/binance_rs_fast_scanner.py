@@ -37,6 +37,11 @@ FAST_CONFIG = {
     "skip_days": 1,
     "annual_factor": 365,
     "min_data_days": 15,
+
+    # 成交量筛选
+    "volume_filter_days": 7,  # 用7天总成交量筛选
+    "volume_top_n": 100,      # 只取 Top 100
+
     "top_n": 20,
 }
 
@@ -263,7 +268,10 @@ def format_rs_fast_message(df_b: pd.DataFrame, df_c: pd.DataFrame,
             f"C7:{c7:>6.2f}  C3:{c3:>5.2f}\n"
         )
 
-    msg_c += f"\n扫描范围: 全部USDT合约 ({total_symbols}个)"
+    msg_c += (
+        f"\n筛选: 7天成交量 Top {total_symbols} | "
+        f"全部USDT合约"
+    )
 
     messages.append(msg_c)
 
@@ -285,7 +293,7 @@ def scan_rs_fast() -> tuple:
         print("[错误] 无法获取交易对列表")
         return None, None, 0
 
-    price_dict = {}
+    all_data = {}
     skipped = 0
     total = len(symbols)
 
@@ -299,16 +307,30 @@ def scan_rs_fast() -> tuple:
             skipped += 1
             continue
 
-        price_dict[symbol] = df["close"].values
+        all_data[symbol] = df
 
         if idx % 20 == 0:
             time.sleep(1)
 
-    print(f"\n[数据] 有效标的: {len(price_dict)}, 跳过: {skipped}")
+    print(f"\n[数据] 有效标的: {len(all_data)}, 跳过: {skipped}")
 
-    if len(price_dict) < 10:
+    if len(all_data) < 10:
         print("[错误] 有效标的太少")
         return None, None, 0
+
+    # 按7天总成交量筛选 Top 100
+    vol_days = FAST_CONFIG["volume_filter_days"]
+    vol_top_n = FAST_CONFIG["volume_top_n"]
+    volume_ranks = {}
+    for symbol, df in all_data.items():
+        tail = df.tail(vol_days)
+        volume_ranks[symbol] = tail["quote_volume"].sum() if "quote_volume" in tail.columns else 0
+
+    sorted_by_vol = sorted(volume_ranks.items(), key=lambda x: x[1], reverse=True)
+    top_symbols = {s for s, _ in sorted_by_vol[:vol_top_n]}
+    print(f"[筛选] {vol_days}天成交量 Top {vol_top_n} (从 {len(all_data)} 只中筛选)")
+
+    price_dict = {s: df["close"].values for s, df in all_data.items() if s in top_symbols}
 
     print("[计算] Method B — 风险调整 Z-Score (7D/3D/1D)...")
     df_b = compute_fast_rs_b(price_dict)
